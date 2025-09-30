@@ -3,6 +3,7 @@
     "files.associations": {
         "ctime": "cpp",
         "atomic": "cpp",
-        "cstdint": "cpp"
+        "cstdint": "cpp",
+        "vector": "cpp"
     }
 }

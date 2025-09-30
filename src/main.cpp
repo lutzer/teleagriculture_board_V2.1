@@ -25,7 +25,7 @@
  *
 
 
-/*********************************** VERSION 1.20 ****************************
+/*********************************** VERSION 1.60 ****************************
 /*
  *
  * board credentials are in /include/board_credentials.h  (BoardID, API_KEY and LORA credentials)
@@ -72,9 +72,16 @@
 #include <sensor_Read.hpp> // Sensor read handling
 #include <WiFiManagerTz.h> // Setup Page html rendering and Web UI input handling ( save_Config() and save_Connectors() gets called in /lib/WiFiManagerTz.h handleValues() )
 #include <RTClib.h>
+#include "mqtt_support.h"
+#include "osc_support.h"
+#include "esp_task_wdt.h"
+
+#define TAC_LOG_LEVEL 3
+#define LOG_TAG "MAIN"
 
 #define DEBUG_PRINT false // full debug print
 #define DOUBLERESETDETECTOR_DEBUG true
+bool configPortal_run = false;
 
 // ----- Function declaration -----//
 void openConfig(void);
@@ -88,6 +95,9 @@ void setupLoRaIfNeeded();
 void setupSDCardIfNeeded();
 void setupWebpageIfNeeded();
 
+void setupMQTTIfNeeded();
+void setupOSCIfNeeded();
+
 void updateTimeHandle();
 void handleButtonPresses();
 void updateDisplay();
@@ -95,10 +105,13 @@ void updateDisplay();
 void handleLoraLoop();
 void handleWiFiLoop();
 void handleSDLoop();
+void handleMQTTLoop();
+void handleOSCLoop();
 
 // Callbacks
 void configModeCallback(WiFiManager *myWiFiManager);
 void on_time_available(struct timeval *t);
+void onMqttMessage(char *topic, byte *payload, unsigned int len);
 
 // Task
 TaskHandle_t configTaskHandle;
@@ -106,10 +119,10 @@ void configButtonTask(void *parameter);
 
 void setup()
 {
-   #if DEBUG_PRINT
+#if DEBUG_PRINT
    delay(2000);
-   #endif
-   
+#endif
+
    initBoard();
    initFiles();
 
@@ -149,6 +162,9 @@ void setup()
    // useSDCard = true;
    // useBattery = false;
 
+   Serial.print("\nBoard ID: ");
+   Serial.println(boardID);
+
    if (forceConfig)
       openConfig();
 
@@ -161,6 +177,8 @@ void setup()
    connectIfWifi();
    setupLoRaIfNeeded();
    setupSDCardIfNeeded();
+   setupMQTTIfNeeded();
+   setupOSCIfNeeded();
    setupWebpageIfNeeded();
 }
 
@@ -170,16 +188,16 @@ void loop()
 
    analogWrite(TFT_BL, backlight_pwm); // Set the backlight brightness of the TFT display
 
-   if (forceConfig)
-      openConfig();
-
    updateTimeHandle(); // Update time and handle periodic tasks (display & upload)
    handleButtonPresses();
 
-   if (no_upload)
+   if (no_upload && !configPortal_run)
    {
       sensorRead(); // Read sensor data
       no_upload = false;
+
+      if (rtcEnabled == true)
+         setESP32timeFromRTC(timeZone.c_str());
 
       if ((!useBattery || !gotoSleep) && useDisplay)
       {
@@ -187,22 +205,33 @@ void loop()
       }
    }
 
-   if (upload == "LORA")
+   if (upload == "LORA" && !configPortal_run)
       handleLoraLoop();
 
-   if (upload == "WIFI")
+   if (upload == "WIFI" && !configPortal_run)
       handleWiFiLoop();
 
-   if (saveDataSDCard)
+   if (saveDataSDCard && !configPortal_run)
       tft->drawRGBBitmap(145, 2, sdcard_icon, 14, 19);
 
-   if (useSDCard)
+   if (useSDCard && !configPortal_run)
       handleSDLoop();
+
+   if (upload == "LIVE")
+   {
+      if (live_mode == "MQTT" && !configPortal_run)
+         handleMQTTLoop();
+
+      if (live_mode == "OSC" && !configPortal_run)
+         handleOSCLoop();
+   }
 
    updateDisplay();
 
-   if (webpage && !forceConfig)
+   if (webpage && !configPortal_run)
       server.handleClient(); // Handle incoming client requests
+
+   vTaskDelay(50);
 }
 
 void openConfig()
@@ -218,6 +247,12 @@ void openConfig()
 
    // set callback that gets called when connecting to previous WiFi fails, and enters Access Point mode
    wifiManager.setAPCallback(configModeCallback);
+   Serial.print("Board ID: ");
+   Serial.println(boardID);
+   Serial.println("SSID: TeleAgriCulture Board");
+   Serial.println("PW: enter123");
+
+   wifiManager.setCleanConnect(true);
 
    if (!wifiManager.startConfigPortal("TeleAgriCulture Board", "enter123"))
    {
@@ -307,89 +342,129 @@ void setUPWiFi()
 
 void wifi_sendData(void)
 {
-   DynamicJsonDocument docMeasures(2000);
+   // 1) Vorab: Wie viele Messwerte senden wir wirklich? (clamp auf measurements[8])
+   size_t nItems = 0;
+   size_t keyBytes = 0;
 
-   for (int i = 0; i < sensorVector.size(); ++i)
+   for (size_t i = 0; i < sensorVector.size(); ++i)
    {
-      for (int j = 0; j < sensorVector[i].returnCount; j++)
+      const Sensor &s = sensorVector[i];
+      int cap = arrlen(s.measurements); // == 8
+      int nTake = s.returnCount;
+      if (nTake < 0)
+         nTake = 0;
+      if (nTake > cap)
       {
-         if (!isnan(sensorVector[i].measurements[j].value))
-         {
-            docMeasures[sensorVector[i].measurements[j].data_name] = static_cast<float>(round(sensorVector[i].measurements[j].value * 100) / 100.0); // sensorVector[i].measurements[j].value;
-         }
+         LOGW("sensor[%u]: returnCount=%d > cap=%d, clamping", (unsigned)i, s.returnCount, cap);
+         nTake = cap;
+      }
+      for (int j = 0; j < nTake; ++j)
+      {
+         const Measurement &m = s.measurements[j];
+         if (m.data_name.length() == 0)
+            continue;
+         if (isnan(m.value))
+            continue;
+         ++nItems;
+         keyBytes += (size_t)m.data_name.length() + 1; // +1 minimaler Slop
       }
    }
 
+   // 2) JSON-Dokument dimensionieren (Faustregel)
+   const size_t capacity = JSON_OBJECT_SIZE(nItems) + keyBytes + nItems * 16;
+   DynamicJsonDocument docMeasures(capacity);
+
+   LOGD("build JSON: sensors=%u, items=%u, capacity=%u",
+        (unsigned)sensorVector.size(), (unsigned)nItems, (unsigned)capacity);
+
+   // 3) JSON füllen (wieder mit clamp)
+   for (size_t i = 0; i < sensorVector.size(); ++i)
+   {
+      const Sensor &s = sensorVector[i];
+      int cap = arrlen(s.measurements);
+      int nTake = s.returnCount;
+      if (nTake < 0)
+         nTake = 0;
+      if (nTake > cap)
+         nTake = cap;
+
+      for (int j = 0; j < nTake; ++j)
+      {
+         const Measurement &m = s.measurements[j];
+         if (m.data_name.length() == 0)
+         {
+            LOGD("sensor[%u].m[%d]: empty name, skip", (unsigned)i, j);
+            continue;
+         }
+         if (isnan(m.value))
+         {
+            LOGD("sensor[%u].m[%d]: NaN, skip", (unsigned)i, j);
+            continue;
+         }
+         const float v = round2f(static_cast<float>(m.value)); // value ist double → float
+         docMeasures[m.data_name] = v;
+      }
+   }
+
+   if (docMeasures.overflowed())
+   {
+      LOGW("JSON overflowed (cap=%u). Ergebnis kann abgeschnitten sein!", (unsigned)capacity);
+   }
+
+   // 4) Serialisieren
    String output;
+   output.reserve(capacity + 32);
    serializeJson(docMeasures, output);
 
-   if (sizeof(output) > 2)
-   {
-      Serial.println("\nsend Data via WIFI:");
-      serializeJson(docMeasures, Serial);
-
-      // Check WiFi connection status
-      if (WiFi.status() == WL_CONNECTED)
-      {
-         // WiFiClient client;
-         //  WiFiClientSecure client;
-         //  client.setCACert(kits_ca);
-
-         WiFiClientSecure *client = new WiFiClientSecure;
-
-         delay(100);
-
-         if (client)
-         {
-
-            client->setCACertBundle(rootca_bundle_crt_start);
-
-            HTTPClient https;
-
-            // https://gitlab.com/teleagriculture/community/-/blob/main/API.md
-
-            // python example
-            // https://gitlab.com/teleagriculture/community/-/blob/main/RPI/tacserial.py
-
-            // should show up there:
-            // https://kits.teleagriculture.org/kits/10xx
-
-            String serverName = "https://kits.teleagriculture.org/api/kits/" + String(boardID) + "/measurements";
-            String api_Bearer = "Bearer " + API_KEY;
-
-            https.begin(*client, serverName);
-
-            delay(100);
-
-            https.addHeader("Content-Type", "application/json");
-            https.addHeader("Authorization", api_Bearer);
-
-            int httpResponseCode = https.POST(output);
-            Serial.println();
-            Serial.println(serverName);
-            Serial.println(api_Bearer);
-
-            Serial.print("\nHTTP Response code: ");
-            Serial.println(httpResponseCode);
-
-            // Free resources
-            https.end();
-            delete client;
-         }
-         else
-         {
-            Serial.printf("\n[HTTPS] Unable to connect\n");
-         }
-      }
-      else
-      {
-         Serial.println("WiFi Disconnected");
-      }
-
-      DynamicJsonDocument deallocate(docMeasures);
+   if (output.length() <= 2)
+   { // "{}" == 2 Zeichen
+      LOGI("kein sendbarer Inhalt (empty JSON)");
+      return;
    }
 
-   Serial.println();
+   LOGD("payload bytes=%u", (unsigned)output.length());
+
+   // 5) WiFi/TLS/HTTP – sauber & mit Logs
+   if (WiFi.status() != WL_CONNECTED)
+   {
+      LOGW("WiFi disconnected, abort");
+      return;
+   }
+
+   const String serverName = "https://kits.teleagriculture.org/api/kits/" + String(boardID) + "/measurements";
+   const String api_Bearer = "Bearer " + API_KEY;
+
+   // Token nicht im Klartext loggen – nur die letzten 6 Zeichen
+   String api_tail = (API_KEY.length() > 6) ? API_KEY.substring(API_KEY.length() - 6) : API_KEY;
+   LOGI("POST %s (items=%u), token[..%s]", serverName.c_str(), (unsigned)nItems, api_tail.c_str());
+
+   WiFiClientSecure client;
+   client.setCACertBundle(rootca_bundle_crt_start); // erwartet, dass dein Bundle eingebunden ist
+
+   HTTPClient https;
+   // begin() liefert bool – prüfen
+   if (!https.begin(client, serverName))
+   {
+      LOGE("HTTPS begin() failed");
+      return;
+   }
+
+   https.addHeader("Content-Type", "application/json");
+   https.addHeader("Authorization", api_Bearer);
+   // Optional: Timeout etwas strenger
+   https.setTimeout(5000);
+
+   const int httpCode = https.POST((uint8_t *)output.c_str(), output.length());
+   if (httpCode <= 0)
+   {
+      LOGE("HTTP POST error: %d", httpCode);
+      https.end();
+      return;
+   }
+
+   LOGI("HTTP %d", httpCode);
+   https.end();
+   DynamicJsonDocument deallocate(docMeasures);
 }
 
 void connectIfWifi()
@@ -457,7 +532,11 @@ void setupLoRaIfNeeded()
 {
    if (upload != "LORA")
       return;
-   WiFiManagerNS::TZ::loadPrefs();
+
+   // WiFiManagerNS::TZ::loadPrefs();
+
+   if (rtcEnabled == true)
+      setESP32timeFromRTC(timeZone.c_str());
 
    digitalWrite(SW_3V3, HIGH);
    delay(500);
@@ -556,86 +635,190 @@ void setupWebpageIfNeeded()
    Serial.println("HTTP server started");
 }
 
-void updateTimeHandle()
+void setupMQTTIfNeeded()
 {
-   time_t rawtime;
-   time(&rawtime);
-   localtime_r(&rawtime, &timeInfo); // Get the current local time
+   if (upload != "LIVE" || live_mode != "MQTT" || forceConfig)
+      return;
 
-   currentDay = timeInfo.tm_mday; // Update the current day
+   setUPWiFi();
 
-   // Check if the day has changed and perform time synchronization if required
-   if ((currentDay != lastDay) && (upload == "WIFI") && !(WiFiManagerNS::NTPEnabled) && !freshBoot)
+   wifiManager.setAPCallback(configModeCallback);
+   bool success = wifiManager.autoConnect("TeleAgriCulture Board", "enter123");
+   if (!success)
    {
-      // The day has changed since the last execution of this block
-      String header = get_header();
+      Serial.println("Failed to connect");
+      ESP.restart();
+   }
 
+   Serial.println("WiFi connected");
+
+   if (live_mode == "MQTT")
+      sendDataMQTT = true;
+
+   if ((WiFi.status() == WL_CONNECTED) && useNTP)
+   {
+      WiFiManagerNS::configTime();
+      WiFiManagerNS::NTP::onTimeAvailable(&on_time_available);
+   }
+   else if (!useNTP && !rtcEnabled)
+   {
+      String header = get_header();
       if (!setEsp32TimeFromHeader(header, timeZone))
       {
          Serial.println("Failed to set time");
       }
-      lastDay = currentDay; // Update the last day value
    }
 
-   unsigned long currentMillis = millis();
-   unsigned long currentMillis_long = millis();
-   unsigned long currentMillis_upload = millis();
+   selectMqttNetClient();
 
-   // check if its time to uplooad based on interval
-   if (currentMillis_upload - previousMillis_upload >= (upload_interval * mS_TO_MIN_FACTOR))
+#if DEBUG_PRINT
+   Serial.print("Network is ok: ");
+   Serial.println(mqttPreflightCheck(mqtt_server_ip, mqtt_port));
+#endif
+
+   setMqttServerFromString(mqtt_server_ip, mqtt_port);
+
+   mqtt.setKeepAlive(30);
+   mqtt.setBufferSize(2048);
+
+   // NEW: actually connect now
+   mqttConnectNow();
+
+   Serial.println("MQTT Setup done...");
+}
+
+void setupOSCIfNeeded()
+{
+   if (upload != "LIVE" || live_mode != "OSC" || forceConfig)
+      return;
+
+   setUPWiFi();
+   wifiManager.setAPCallback(configModeCallback);
+   if (!wifiManager.autoConnect("TeleAgriCulture Board", "enter123"))
    {
-      delay(100);
+      Serial.println("Failed to connect");
+      ESP.restart();
+   }
+   Serial.println("WiFi connected");
 
-      if (upload == "NO")
-         no_upload = true; // Set flag to indicate no upload
+   sendDataOSC = true;
 
-      if (upload == "WIFI")
-         sendDataWifi = true; // Set flag to send data via WiFi
-
-      if (upload == "LORA" && !useBattery)
+   if ((WiFi.status() == WL_CONNECTED) && useNTP)
+   {
+      WiFiManagerNS::configTime();
+      WiFiManagerNS::NTP::onTimeAvailable(&on_time_available);
+   }
+   else if (!useNTP && !rtcEnabled)
+   {
+      String header = get_header();
+      if (!setEsp32TimeFromHeader(header, timeZone))
       {
-         if (loraJoined)
-         {
-            sendDataLoRa = true; // Set flag to send data via LoRa
-         }
+         Serial.println("Failed to set time");
+      }
+   }
+
+   if (!oscConnectNow())
+   {
+      Serial.println("OSC: initial resolve failed (will retry).");
+   }
+
+   Serial.println("OSC Setup done...");
+}
+
+void updateTimeHandle()
+{
+   // --- time & day change handling ---
+   time_t rawtime;
+   time(&rawtime);
+   localtime_r(&rawtime, &timeInfo);
+   currentDay = timeInfo.tm_mday;
+
+   if ((currentDay != lastDay) && (upload == "WIFI") && !WiFiManagerNS::NTPEnabled && !freshBoot)
+   {
+      String header = get_header();
+      if (!setEsp32TimeFromHeader(header, timeZone))
+      {
+         Serial.println("Failed to set time");
+      }
+      lastDay = currentDay;
+   }
+
+   const unsigned long now = millis();
+
+   // --- interval-based upload (default mode) ---
+   if (now - previousMillis_upload >= (upload_interval * mS_TO_MIN_FACTOR))
+   {
+      if (upload == "NO")
+      {
+         no_upload = true;
+      }
+      if (upload == "WIFI")
+      {
+         sendDataWifi = true;
+      }
+      if (upload == "LORA" && !useBattery && loraJoined)
+      {
+         sendDataLoRa = true;
+      }
+
+      if (!instant_upload)
+      { // instant handles LIVE separately
+         if (live_mode == "MQTT")
+            sendDataMQTT = true;
+         if (live_mode == "OSC")
+            sendDataOSC = true;
       }
 
       if (saveDataSDCard)
-         useSDCard = true; // Set flag to send data via SDCard
+      {
+         useSDCard = true;
+      }
 
-      previousMillis_upload = currentMillis_upload;
+      previousMillis_upload = now;
    }
 
-   // Perform periodic tasks based on intervals
-   if (currentMillis - previousMillis >= interval) // lower tft brightness after 1 min
+   // --- instant upload (only when new data available) ---
+   if (instant_upload && newSensorDataAvailable)
    {
-      backlight_pwm = 5; // Turn down the backlight
-      previousMillis = currentMillis;
+      static unsigned long lastInstantPush = 0;
+      const uint32_t minGap = 100; // ms, prevents flooding if sensors fire too fast
 
-      if (upload == "WIFI" && useBattery)
+      if (now - lastInstantPush >= minGap)
       {
-         gotoSleep = true; // Enable sleep mode if using WiFi and battery power
-      }
+         if (live_mode == "MQTT")
+            sendDataMQTT = true;
+         if (live_mode == "OSC")
+            sendDataOSC = true;
 
-      if (upload == "LORA" && useBattery)
-      {
-         gotoSleep = true; // Enable sleep mode if using LoRa and battery power and data transmitted
-      }
-
-      if (useSDCard && useBattery)
-      {
-         gotoSleep = true; // Enable sleep mode if using SDCard and battery power and data transmitted
+         lastInstantPush = now;
+         newSensorDataAvailable = false; // reset flag once handled
       }
    }
 
-   if (currentMillis_long - previousMillis_long >= interval2) // turn tft off after 5 min
+   // --- periodic UI/power tasks ---
+   if (now - previousMillis >= interval) // dim TFT after 1 min
    {
-      backlight_pwm = 0;             // Turn off the backlight
-      tft->fillScreen(ST7735_BLACK); // Fill the TFT screen with black color
-      previousMillis_long = currentMillis_long;
+      backlight_pwm = 5;
+      previousMillis = now;
+
+      if (useBattery)
+      {
+         if (upload == "WIFI")
+            gotoSleep = true;
+         if (upload == "LORA")
+            gotoSleep = true;
+         if (useSDCard)
+            gotoSleep = true;
+      }
+   }
+
+   if (now - previousMillis_long >= interval2) // turn off TFT after 5 min
+   {
+      backlight_pwm = 0;
+      tft->fillScreen(ST7735_BLACK);
+      previousMillis_long = now;
       displayRefresh = true;
-      tft->enableSleep(true); // Enable sleep mode for the TFT display
-                              // digitalWrite(TFT_BL, LOW);
+      tft->enableSleep(true);
    }
 }
 
@@ -681,6 +864,7 @@ void configButtonTask(void *parameter)
          if (pressed && (millis() - pressStart > 4000))
          {
             Serial.println("Long press detected -> Starting ConfigPortal");
+            configPortal_run = true;
 
             startBlinking();
 
@@ -693,6 +877,10 @@ void configButtonTask(void *parameter)
                setUPWiFi();
             }
 
+            // stopping Button Task Watchdog
+            esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
+            esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(1));
+            wifiManager.setCleanConnect(true);
             // start configuration portal
             if (!wifiManager.startConfigPortal("TeleAgriCulture Board", "enter123"))
             {
@@ -1024,6 +1212,30 @@ void handleSDLoop()
    }
 }
 
+void handleMQTTLoop()
+{
+   mqttLoop();
+
+   if (sendDataMQTT)
+   {
+      sensorRead();
+      publishLiveTopics();
+      sendDataMQTT = false;
+   }
+}
+
+void handleOSCLoop()
+{
+   oscLoop();
+
+   if (sendDataOSC)
+   {
+      sensorRead();
+      publishLiveOsc();
+      sendDataOSC = false;
+   }
+}
+
 // callback function, fired when NTP gets updated.
 // Used to print the updated time or adjust an external RTC module.
 void on_time_available(struct timeval *t)
@@ -1092,4 +1304,9 @@ void configModeCallback(WiFiManager *myWiFiManager)
       tft->setTextColor(ST7735_BLUE);
       tft->print(version);
    }
+}
+
+void onMqttMessage(char *topic, byte *payload, unsigned int len)
+{
+   // handle commands if you subscribe later
 }
