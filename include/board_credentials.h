@@ -11,6 +11,7 @@
 inline int boardID = 1000;
 inline String version = "Firmware Version " TAC_VERSION;
 inline String API_KEY = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+inline String POST_URL = "https://kits.teleagriculture.org/api/kits/{boardID}/measurements";
 inline String lora_fqz = CUSTOM_LORA_FQZ;
 inline String OTAA_APPEUI = "0000000000000000";
 inline String OTAA_DEVEUI = "0000000000000000";

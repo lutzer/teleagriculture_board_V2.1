@@ -389,6 +389,7 @@ void save_Config(void)
    doc["rtcEnabled"] = rtcEnabled;
 
    doc["API_KEY"] = API_KEY.length() ? API_KEY : "";
+   doc["POST_URL"] = POST_URL.length() ? POST_URL : "";
    doc["upload"] = upload.length() ? upload : "";
    doc["upInterval"] = upload_interval;
    doc["instant_upload"] = instant_upload;
@@ -487,6 +488,8 @@ void load_Config(void)
 
    if (doc.containsKey("API_KEY"))
       API_KEY = doc["API_KEY"].as<String>();
+   if (doc.containsKey("POST_URL"))
+      POST_URL = doc["POST_URL"].as<String>();
    if (doc.containsKey("upload"))
       upload = doc["upload"].as<String>();
 

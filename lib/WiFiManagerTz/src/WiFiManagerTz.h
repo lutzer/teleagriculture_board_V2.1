@@ -424,7 +424,11 @@ namespace WiFiManagerNS
     TimeConfHTML += "<label for='API_KEY'>API KEY:</label>"
                     "<input type='text' id='API_KEY' name='API_KEY' pattern='^[A-Za-z0-9]{32}$' "
                     "title=' Enter Bearer token' value=" +
-                    API_KEY + " required></div></div>";
+                    API_KEY + " required></div>";
+    TimeConfHTML += "<label for='POST_URL'>POST_URL:</label>"
+                    "<input type='text' id='POST_URL' name='POST_URL' pattern='^https?://[^\\s]*(\\{[^}]*\\}[^\\s]*)*$' maxlength='128' "
+                    "title=' Enter post url, add {boardID} as placeholder for the board ID' value=" +
+                    POST_URL + " required></div></div>";
 
     // ===== LORA =====
     TimeConfHTML += "<div id='Lora' style='display:none'><BR><b>LoRa TTN Data</b>";
@@ -812,8 +816,10 @@ namespace WiFiManagerNS
     html += "BoardID = " + String(boardID) + "\n";
     html += "upload = " + upload + "\n";
 
-    if (upload == "WIFI")
+    if (upload == "WIFI") {
       html += "API Key = " + API_KEY + "\n";
+      html += "POST Url = " + POST_URL + "\n";
+    }
 
     if (upload == "LORA")
     {
@@ -1136,6 +1142,10 @@ namespace WiFiManagerNS
     if (_wifiManager->server->hasArg("API_KEY"))
     {
       API_KEY = getStringArg("API_KEY").c_str();
+    }
+    if (_wifiManager->server->hasArg("POST_URL"))
+    {
+      POST_URL = getStringArg("POST_URL").c_str();
     }
     if (_wifiManager->server->hasArg("anonym"))
     {

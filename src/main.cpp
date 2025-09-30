@@ -431,40 +431,77 @@ void wifi_sendData(void)
       return;
    }
 
-   const String serverName = "https://kits.teleagriculture.org/api/kits/" + String(boardID) + "/measurements";
+   String serverName = POST_URL;
+   serverName.replace("{boardID}", String(boardID));
+
    const String api_Bearer = "Bearer " + API_KEY;
 
    // Token nicht im Klartext loggen – nur die letzten 6 Zeichen
    String api_tail = (API_KEY.length() > 6) ? API_KEY.substring(API_KEY.length() - 6) : API_KEY;
    LOGI("POST %s (items=%u), token[..%s]", serverName.c_str(), (unsigned)nItems, api_tail.c_str());
 
-   WiFiClientSecure client;
-   client.setCACertBundle(rootca_bundle_crt_start); // erwartet, dass dein Bundle eingebunden ist
+   if (serverName.startsWith("https")) {
+      WiFiClientSecure client;
+      client.setCACertBundle(rootca_bundle_crt_start); // erwartet, dass dein Bundle eingebunden ist
 
-   HTTPClient https;
-   // begin() liefert bool – prüfen
-   if (!https.begin(client, serverName))
-   {
-      LOGE("HTTPS begin() failed");
-      return;
-   }
+      HTTPClient https;
+      // begin() liefert bool – prüfen
+      if (!https.begin(client, serverName))
+      {
+         LOGE("HTTPS begin() failed");
+         return;
+      }
 
-   https.addHeader("Content-Type", "application/json");
-   https.addHeader("Authorization", api_Bearer);
-   // Optional: Timeout etwas strenger
-   https.setTimeout(5000);
+      https.addHeader("Content-Type", "application/json");
+      https.addHeader("Authorization", api_Bearer);
+      // Optional: Timeout etwas strenger
+      https.setTimeout(5000);
 
-   const int httpCode = https.POST((uint8_t *)output.c_str(), output.length());
-   if (httpCode <= 0)
-   {
-      LOGE("HTTP POST error: %d", httpCode);
+      //LOGI("Sending data via HTTPS to %s", serverName.c_str());
+      const int httpCode = https.POST((uint8_t *)output.c_str(), output.length());
+      if (httpCode <= 0)
+      {
+         LOGE("HTTP POST error: %d", httpCode);
+         https.end();
+         return;
+      }
+
+      LOGI("HTTP %d", httpCode);
       https.end();
-      return;
+   } else if (serverName.startsWith("http")) {
+      WiFiClient client;
+
+      delay(100);
+
+      HTTPClient http;
+
+      http.begin(client, serverName);
+
+      delay(100);
+
+      http.addHeader("Content-Type", "application/json");
+      http.addHeader("Authorization", api_Bearer);
+      http.setTimeout(5000);
+
+      //LOGI("Sending data via HTTP to %s", serverName.c_str());
+      const int httpCode = http.POST((uint8_t *)output.c_str(), output.length());
+      if (httpCode <= 0)
+      {
+         LOGE("HTTP POST error: %d", httpCode);
+         http.end();
+         return;
+      }
+      
+      LOGI("HTTP %d", httpCode);
+      http.end();
+
+   } else {
+      Serial.println("Failed to post data to " + serverName + ". Must start with http or https");
    }
 
-   LOGI("HTTP %d", httpCode);
-   https.end();
    DynamicJsonDocument deallocate(docMeasures);
+
+   
 }
 
 void connectIfWifi()
