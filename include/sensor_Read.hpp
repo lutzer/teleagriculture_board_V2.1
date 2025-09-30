@@ -146,6 +146,10 @@ float acidVoltage = 2032.44;   // buffer solution 4.0 at 22C
 float neutralVoltage = 1455.0; // buffer solution 7.0 at 22C
 // calibration values for: Gravity: Analog pH Sensor / Meter Kit V2
 
+// values for anemometer
+#define ANEMOMETER_MEASURE_INTERVAL 5000
+#define ANEMOMETER_KMH_PER_HERTZ 2.4f
+
 void sensorRead()
 {
     digitalWrite(LED, HIGH);
@@ -1089,6 +1093,60 @@ void readOneWire_Connectors()
             newSensor.measurements[0].value = dht2.readTemperature();
             newSensor.measurements[1].value = dht2.readHumidity();
 
+            sensorVector.push_back(newSensor);
+        }
+        break;
+
+        case ANEMOMETER:
+        {
+            
+            uint8_t anemometerPin;
+
+            switch (OWi) {
+                case 0:
+                    anemometerPin = ONEWIRE_1;
+                    break;
+                case 1:
+                    anemometerPin = ONEWIRE_2;
+                    break;
+                case 2:
+                    anemometerPin = ONEWIRE_3;
+                    break;
+            }
+
+            pinMode(anemometerPin, INPUT);
+
+            long startTime = millis();
+            long firstImpulseTime = 0;
+            long lastImpulseTime = 0;
+            int counter = 0;
+            int lastState = HIGH;
+
+            while(millis() < startTime + ANEMOMETER_MEASURE_INTERVAL) {
+                int currentState = digitalRead(anemometerPin);
+                
+                if (currentState == LOW && lastState == HIGH) {
+                if (counter == 0) {
+                    firstImpulseTime = millis();
+                }
+                lastImpulseTime = millis();
+                counter++;
+                delay(5);
+                }
+
+                lastState = currentState;
+            }
+
+            float speed = 0;
+            float interval = (lastImpulseTime - firstImpulseTime) / 1000.0f;
+            
+            if (counter > 1 && interval > 0 ) {
+                float impulsesPerSecond = interval / (counter - 1);
+                speed = ANEMOMETER_KMH_PER_HERTZ / impulsesPerSecond ;
+            }
+
+            Sensor newSensor = allSensors[ANEMOMETER];
+            newSensor.measurements[0].value = speed;
             sensorVector.push_back(newSensor);
         }
         break;

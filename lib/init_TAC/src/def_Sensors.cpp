@@ -99,6 +99,8 @@ ValueOrder getValueOrderFromString(String str)
     return KOHM;
   if (str == "DIRECTION")
     return DEGREE;
+  if (str == "SPEED")
+    return SPEED;
 
   return NOT;
 }
@@ -700,6 +702,20 @@ const char *proto_sensors = R"([
         "valueOrder": "DIRECTION",
         "unit": "deg",
         "data_name": "Wind dir"
+      }
+    ]
+  },
+  {
+    "sensor-id": 29,
+    "name": "ANEMOMETER",
+    "con_typ": "ONE_WIRE",
+    "returnCount": 1,
+    "measurements": [
+      {
+        "value": 0.0,
+        "valueOrder": "SPEED",
+        "unit": "km/h",
+        "data_name": "Wind spd"
       }
     ]
   }
