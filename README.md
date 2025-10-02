@@ -147,4 +147,6 @@ there is also a section about integrated sensors.
 - SHT_21
 - TDS
 - VELM7700
+- SPF_ANENOMETER
+- SPF_WINDVANE
 

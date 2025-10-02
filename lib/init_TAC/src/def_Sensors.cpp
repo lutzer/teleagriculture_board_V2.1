@@ -693,7 +693,7 @@ const char *proto_sensors = R"([
   },
   {
     "sensor-id": 28,
-    "name": "WIND_VANE",
+    "name": "SPF_WINDVANE",
     "con_typ": "ADC",
     "returnCount": 1,
     "measurements": [
@@ -707,7 +707,7 @@ const char *proto_sensors = R"([
   },
   {
     "sensor-id": 29,
-    "name": "ANEMOMETER",
+    "name": "SPF_ANEMOMETER",
     "con_typ": "ONE_WIRE",
     "returnCount": 1,
     "measurements": [

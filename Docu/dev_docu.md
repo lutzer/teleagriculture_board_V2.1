@@ -215,8 +215,8 @@ pio device monitor -b 115200
 - **ADS1115**: 16-bit ADC for precision analog measurements
 - **TDS**: Total dissolved solids sensor for water quality
 - **DFR LM35**: Precision temperature sensor
-- **ANEMOMETER**: Anemometer from Sparkfun Weather Kit
-- **WIND_VANE**: Wind Vane from Sparkfun Weather Kit
+- **SPF_ANEMOMETER**: Anemometer from Sparkfun Weather Kit
+- **SPF_WIND_VANE**: Wind Vane from Sparkfun Weather Kit
 
 #### Additional Components
 - **WS2812**: RGB LED strip control for visual indicators

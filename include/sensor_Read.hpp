@@ -147,8 +147,8 @@ float neutralVoltage = 1455.0; // buffer solution 7.0 at 22C
 // calibration values for: Gravity: Analog pH Sensor / Meter Kit V2
 
 // values for anemometer
-#define ANEMOMETER_MEASURE_INTERVAL 5000
-#define ANEMOMETER_KMH_PER_HERTZ 2.4f
+#define SPF_ANEMOMETER_MEASURE_INTERVAL 5000
+#define SPF_ANEMOMETER_KMH_PER_HERTZ 2.4f
 
 void sensorRead()
 {
@@ -944,7 +944,7 @@ void readADC_Connectors()
         }
         break;
 
-        case WIND_VANE:
+        case SPF_WINDVANE:
         {
             uint8_t windVanePin;
 
@@ -1007,7 +1007,7 @@ void readADC_Connectors()
             float direction = closestIndex * SFE_WIND_VANE_DEGREES_PER_INDEX;
 
             // add value to sensor
-            Sensor newSensor = allSensors[WIND_VANE];
+            Sensor newSensor = allSensors[SPF_WINDVANE];
             newSensor.measurements[0].value = direction;
             sensorVector.push_back(newSensor);
             
@@ -1097,7 +1097,7 @@ void readOneWire_Connectors()
         }
         break;
 
-        case ANEMOMETER:
+        case SPF_ANEMOMETER:
         {
             
             uint8_t anemometerPin;
@@ -1122,7 +1122,7 @@ void readOneWire_Connectors()
             int counter = 0;
             int lastState = HIGH;
 
-            while(millis() < startTime + ANEMOMETER_MEASURE_INTERVAL) {
+            while(millis() < startTime + SPF_ANEMOMETER_MEASURE_INTERVAL) {
                 int currentState = digitalRead(anemometerPin);
                 
                 if (currentState == LOW && lastState == HIGH) {
@@ -1142,10 +1142,10 @@ void readOneWire_Connectors()
             
             if (counter > 1 && interval > 0 ) {
                 float impulsesPerSecond = interval / (counter - 1);
-                speed = ANEMOMETER_KMH_PER_HERTZ / impulsesPerSecond ;
+                speed = SPF_ANEMOMETER_KMH_PER_HERTZ / impulsesPerSecond ;
             }
 
-            Sensor newSensor = allSensors[ANEMOMETER];
+            Sensor newSensor = allSensors[SPF_ANEMOMETER];
             newSensor.measurements[0].value = speed;
             sensorVector.push_back(newSensor);
         }
