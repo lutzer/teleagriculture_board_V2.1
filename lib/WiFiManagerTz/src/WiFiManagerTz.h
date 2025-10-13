@@ -424,7 +424,7 @@ namespace WiFiManagerNS
     TimeConfHTML += "<label for='API_KEY'>API KEY:</label>"
                     "<input type='text' id='API_KEY' name='API_KEY' pattern='^[A-Za-z0-9]{32}$' "
                     "title=' Enter Bearer token' value=" +
-                    API_KEY + " required></div>";
+                    API_KEY + " required>";
     TimeConfHTML += "<label for='POST_URL'>POST_URL:</label>"
                     "<input type='text' id='POST_URL' name='POST_URL' pattern='^https?://[^\\s]*(\\{[^}]*\\}[^\\s]*)*$' maxlength='128' "
                     "title=' Enter post url, add {boardID} as placeholder for the board ID' value=" +
