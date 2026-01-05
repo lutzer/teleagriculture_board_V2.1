@@ -683,7 +683,7 @@ const char *proto_sensors = R"([
         "value": 5.5,
         "valueOrder": "UV_I",
         "unit": "mW/cm^2",
-        "data_name": "UV Index"
+        "data_name": "uv"
       }
     ],
     "addr_num": 1,
@@ -701,7 +701,7 @@ const char *proto_sensors = R"([
         "value": 0.0,
         "valueOrder": "DIRECTION",
         "unit": "deg",
-        "data_name": "Wind dir"
+        "data_name": "wind_dir"
       }
     ]
   },
@@ -715,7 +715,7 @@ const char *proto_sensors = R"([
         "value": 0.0,
         "valueOrder": "SPEED",
         "unit": "km/h",
-        "data_name": "Wind spd"
+        "data_name": "wind_spd"
       }
     ]
   }

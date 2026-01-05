@@ -338,6 +338,17 @@ void printLocalTime()
    Serial.println(buffer);
 }
 
+void getLocalTimeString(char* timeString, size_t size)
+{
+   struct tm timeInfo;
+   if (!getLocalTime(&timeInfo))
+   {
+      Serial.println("Failed to obtain time");
+      return;
+   }
+   strftime(timeString, size, "%Y-%m-%d %H:%M:%S %Z", &timeInfo);
+}
+
 int seconds_to_next_hour()
 {
    struct tm timeInfo;

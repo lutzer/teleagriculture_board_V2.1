@@ -370,8 +370,8 @@ void wifi_sendData(void)
       }
    }
 
-   // 2) JSON-Dokument dimensionieren (Faustregel)
-   const size_t capacity = JSON_OBJECT_SIZE(nItems) + keyBytes + nItems * 16;
+   // 2) JSON-Dokument dimensionieren (Faustregel) + Timestamp
+   const size_t capacity = JSON_OBJECT_SIZE(nItems) + keyBytes + nItems * 16 + 64;
    DynamicJsonDocument docMeasures(capacity);
 
    LOGD("build JSON: sensors=%u, items=%u, capacity=%u",
@@ -405,6 +405,11 @@ void wifi_sendData(void)
          docMeasures[m.data_name] = v;
       }
    }
+
+   // add time
+   char timeString[64];
+   getLocalTimeString(timeString, 64);
+   docMeasures["time"] = timeString;
 
    if (docMeasures.overflowed())
    {
