@@ -326,7 +326,7 @@ void setUPWiFi()
    wifiManager.setConnectRetries(10);
    wifiManager.setCleanConnect(true);
    wifiManager.setConfigPortalBlocking(true);
-   wifiManager.setTimeout(900); // set timeout for ConfigPortal to 15min (900s)
+   wifiManager.setTimeout(60); // set timeout for ConfigPortal to 15min (900s)
 
    // /!\ make sure "custom" is listed there as it's required to pull the "Board Setup" button
    std::vector<const char *> menu = {"custom", "wifi", "info", "update", "restart", "exit"};
